@@ -66,6 +66,12 @@ body.wurli #ludwig, body.wurli #bubble, body.wurli #hud, body.wurli #score{displ
 #vocBtn{position:fixed;top:12px;left:400px;z-index:3;font:15px "Righteous","Avenir Next",sans-serif;letter-spacing:.06em;padding:8px 16px;border-radius:4px;
   border:1px solid #3dff9a;color:#3dff9a;cursor:pointer;background:#16191d;box-shadow:0 0 10px rgba(61,255,154,.35)}
 #vocBtn:hover{filter:brightness(1.2)}
+#rushBtn{position:fixed;top:12px;left:540px;z-index:3;font:16px "IM Fell English",Georgia,serif;letter-spacing:.05em;padding:8px 18px;border-radius:3px;
+  border:1px solid #4a1414;color:#f3e7c9;cursor:pointer;background:linear-gradient(#2f5a2a,#173515);box-shadow:inset 0 1px 0 rgba(255,255,255,.2),0 2px 6px rgba(0,0,0,.4)}
+#rushBtn:hover{filter:brightness(1.15)}
+body:not(.notes):not(.rush) #rushBtn, body.rush #gameBtn, body.rush #wurliBtn, body.rush #vocBtn{display:none}
+body.rush #rushBtn{left:16px}
+body.rush #hud, body.rush #score{display:none}
 body.penguin #vocBtn, body.game #vocBtn, body.wurli #vocBtn, body.voc #gameBtn, body.voc #wurliBtn{display:none}
 body.voc #vocBtn{left:16px}
 body.voc #ludwig, body.voc #bubble, body.voc #hud, body.voc #score{display:none}
@@ -90,6 +96,7 @@ body.game #bubble::after{left:auto;right:-14px;border-right:8px solid transparen
 <button id="wayFullBtn" class="songBtn" style="top:144px">♫ The Way It Is · Full</button>
 <button id="wurliBtn">◉ 1970s Visualizer</button>
 <button id="vocBtn">⌁ Vocoder</button>
+<button id="rushBtn">𝅘𝅥 Note Rush</button>
 <div id="vocPanel"><button id="vocMic">🎙 Mic off</button><button data-kind="punchy" class="on">Punchy</button><button data-kind="robot">Robot</button><button data-kind="classic">Classic 80s</button><button data-kind="choir">Choir</button><button data-kind="talkbox">Talk Box</button></div>
 <div id="ludwig" title="Ludwig van Beethoven"><canvas id="bust" width="480" height="520"></canvas></div>
 <svg width="0" height="0" style="position:absolute"><filter id="clay" x="-10%" y="-10%" width="120%" height="120%">
@@ -179,7 +186,7 @@ if (navigator.requestMIDIAccess) {
   }, () => hud.textContent = 'MIDI access denied — use the computer keys');
 } else hud.textContent = 'No Web MIDI in this browser — use Chrome (computer keys also work)';
 const held = new Set();   // every note currently down, black keys included (for the staff)
-function noteOn(n, vel = 0.7){ held.add(n); keepAwake(); if (mode === 'game') gameHit(n); glows.push({ n, t: performance.now(), v: vel }); playNote(n, vel); const b = noteToBoard.get(n); if (b && mode === 'penguin') press(b); }
+function noteOn(n, vel = 0.7){ held.add(n); keepAwake(); if (mode === 'game') gameHit(n); if (mode === 'rush') rushHit(n); glows.push({ n, t: performance.now(), v: vel }); playNote(n, vel); const b = noteToBoard.get(n); if (b && mode === 'penguin') press(b); }
 function noteOff(n){ held.delete(n); stopNote(n); fading.set(n, performance.now()); const b = noteToBoard.get(n); if (b && mode === 'penguin') release(b); }
 
 // ---- harpsichord: plucked bright strings, an 8' choir plus a quieter 4' an octave up; no dynamics, quick damping ----
@@ -246,7 +253,8 @@ function setMode(m){
   document.getElementById('gameBtn').textContent = m === 'game' ? '✕ Leave the game' : '♫ Play Ode to Joy';
   document.getElementById('wurliBtn').textContent = m === 'wurli' ? '✕ Leave Visualizer' : '◉ 1970s Visualizer';
   document.getElementById('vocBtn').textContent = m === 'voc' ? '✕ Leave Vocoder' : '⌁ Vocoder';
-  KR = m === 'game' ? GAME_RANGE : m === 'wurli' ? WURLI_RANGE : m === 'voc' ? VOC_RANGE : [21, 108];
+  document.getElementById('rushBtn').textContent = m === 'rush' ? '✕ Leave Note Rush' : '𝅘𝅥 Note Rush';
+  KR = m === 'rush' ? RUSH_RANGE : m === 'game' ? GAME_RANGE : m === 'wurli' ? WURLI_RANGE : m === 'voc' ? VOC_RANGE : [21, 108];
   for (const b of boards){ b.down = false; b.bend = 0; }
   flyers.length = 0;
   if (m !== 'game') try { localStorage.setItem('mode', m); } catch {}
@@ -784,6 +792,101 @@ document.getElementById('vocBtn').onclick = e => { setMode(mode === 'voc' ? 'not
 document.getElementById('vocMic').onclick = e => { vocMic(!(voc && voc.stream)); e.target.blur(); };
 document.querySelectorAll('#vocPanel [data-kind]').forEach(b => b.onclick = e => { vocSetKind(b.dataset.kind); e.target.blur(); });
 
+// ---- Note Rush: one note at a time on the treble staff; play it as fast as you can ----
+// White notes C4..A5. The 60-second clock starts on your first key press.
+const RUSH_RANGE = [57, 84];
+const RUSH_POOL = []; for (let n = 60; n <= 81; n++) if (WHITE_PCS.includes(n % 12)) RUSH_POOL.push(n);
+const RUSH_SECS = 60;
+let rush = null;
+function startRush(){
+  rush = { target: rushPick(null), shown: performance.now(), t0: 0, score: 0, streak: 0, best: 0, misses: 0, times: [], flash: null, done: false };
+}
+function rushPick(prev){ let n; do n = RUSH_POOL[Math.floor(Math.random()*RUSH_POOL.length)]; while (n === prev); return n; }
+function rushHit(n){
+  if (!rush || rush.done) return;
+  const now = performance.now();
+  if (!rush.t0) rush.t0 = now;
+  if (n === rush.target){
+    rush.times.push(now - rush.shown); rush.score++; rush.streak++; rush.best = Math.max(rush.best, rush.streak);
+    rush.flash = { ok: true, n, at: now, from: rush.target };
+    rush.target = rushPick(rush.target); rush.shown = now;
+    if (rush.streak && rush.streak % 15 === 0) say(pick([`${rush.streak} in a row! Your eyes are quick.`, 'Ja! You read like a Kapellmeister.', 'Wunderbar — keep the tempo!']));
+  } else {
+    rush.misses++; rush.streak = 0; rush.flash = { ok: false, n, at: now, from: rush.target };
+  }
+}
+function drawRush(){
+  const now = performance.now();
+  if (rush.t0 && !rush.done && now - rush.t0 >= RUSH_SECS*1000){
+    rush.done = true;
+    const avg = rush.times.length ? rush.times.reduce((a, b) => a + b, 0)/rush.times.length/1000 : 0;
+    say(rush.score >= 40 ? 'Magnificent! You sight-read like a master.' : rush.score >= 20 ? `Bravo! ${rush.score} notes. Tomorrow, more!` : 'A fine start. Every note you read makes the next one easier.');
+    rush.avg = avg;
+  }
+  // parchment card
+  const cw = Math.min(W - 80, 760), ch = Math.min(H - KB - 150, 440), cx = (W - cw)/2, cy = 110;
+  ctx.fillStyle = '#f3e7c9'; ctx.fillRect(cx, cy, cw, ch);
+  ctx.strokeStyle = gold(cx, cy, cx + cw, cy + ch); ctx.lineWidth = 5; ctx.strokeRect(cx + 6, cy + 6, cw - 12, ch - 12);
+  // clock and score
+  const left = rush.t0 ? Math.max(0, RUSH_SECS - (now - rush.t0)/1000) : RUSH_SECS;
+  ctx.fillStyle = 'rgba(60,35,10,0.2)'; ctx.fillRect(cx + 30, cy + 28, cw - 60, 4);
+  ctx.fillStyle = left < 10 ? '#8c1e1e' : '#4a1414'; ctx.fillRect(cx + 30, cy + 28, (cw - 60)*left/RUSH_SECS, 4);
+  ctx.fillStyle = '#3a1810'; ctx.textBaseline = 'alphabetic';
+  ctx.font = '26px "Playfair Display", Georgia, serif'; ctx.textAlign = 'left'; ctx.fillText(`${rush.score}`, cx + 30, cy + 66);
+  ctx.font = 'italic 16px "IM Fell English", Georgia, serif'; ctx.fillText(`notes · streak ${rush.streak}`, cx + 30 + ctx.measureText(String(rush.score)).width + 26, cy + 64);
+  ctx.textAlign = 'right'; ctx.font = '26px "Playfair Display", Georgia, serif'; ctx.fillText(`${Math.ceil(left)}s`, cx + cw - 30, cy + 66);
+
+  // treble staff
+  const step = Math.min(14, ch/22), sx = cx + 60, ex = cx + cw - 60, mid = cy + ch*0.55;
+  const yOf = d => mid - (d - 34)*step;                       // B4 (d 34) on the middle line
+  ctx.strokeStyle = '#3a1810'; ctx.lineWidth = 1.6;
+  for (const d of [30, 32, 34, 36, 38]) inkLine(sx, yOf(d), ex, yOf(d));
+  ctx.fillStyle = '#3a1810'; ctx.textAlign = 'left';
+  ctx.font = `${step*13.5}px "Apple Symbols", serif`; ctx.fillText('𝄞', sx + 6, yOf(30) + step*0.6);
+
+  // the note, sliding in from the right; letter beside it
+  const nx = cx + cw*0.56, age = Math.min(1, (now - rush.shown)/140), x = nx + (1 - age)*40;
+  const d = diatonic(rush.target), y = yOf(d);
+  ctx.globalAlpha = age;
+  ctx.strokeStyle = '#3a1810'; ctx.lineWidth = 1.6;
+  for (let L = 28; L >= d && L < 30; L -= 2) inkLine(x - step*1.9, yOf(L), x + step*1.9, yOf(L));   // below the staff
+  for (let L = 40; L <= d; L += 2) inkLine(x - step*1.9, yOf(L), x + step*1.9, yOf(L));            // above the staff
+  ctx.fillStyle = '#1c0d08'; ctx.beginPath(); ctx.ellipse(x, y, step*1.25, step*0.9, -0.35, 0, 7); ctx.fill();
+  const up = d < 34; ctx.lineWidth = 2.2; ctx.beginPath();
+  ctx.moveTo(x + (up ? step*1.15 : -step*1.15), y); ctx.lineTo(x + (up ? step*1.15 : -step*1.15), y + (up ? -step*7 : step*7)); ctx.stroke();
+  ctx.font = `${step*3.4}px "Playfair Display", Georgia, serif`; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#7a1f22'; ctx.fillText(NAMES[rush.target % 12], x + step*3.6, y);
+  ctx.globalAlpha = 1; ctx.textBaseline = 'alphabetic';
+
+  // feedback
+  if (rush.flash){
+    const a = 1 - (now - rush.flash.at)/600;
+    if (a > 0){
+      ctx.globalAlpha = a; ctx.textAlign = 'center'; ctx.font = 'italic 24px "IM Fell English", Georgia, serif';
+      if (rush.flash.ok){ ctx.fillStyle = '#2e5a1c'; ctx.fillText('✓ ' + NAMES[rush.flash.from % 12], nx - step*8, cy + ch - 40); }
+      else { ctx.fillStyle = '#8c1e1e'; ctx.fillText(`✗ that was ${NAMES[rush.flash.n % 12]}${Math.floor(rush.flash.n/12) - 1}`, nx, cy + ch - 40); }
+      ctx.globalAlpha = 1;
+    }
+  }
+  if (!rush.t0){ ctx.fillStyle = '#4a1414'; ctx.textAlign = 'center'; ctx.font = 'italic 18px "IM Fell English", Georgia, serif'; ctx.fillText('Play the note shown — the clock starts with your first key', W/2, cy + ch - 40); }
+
+  // results
+  if (rush.done){
+    const bw = Math.min(460, W - 40), bh = 220, bx = (W - bw)/2, by = cy + ch/2 - bh/2;
+    ctx.fillStyle = '#f3e7c9'; ctx.fillRect(bx, by, bw, bh);
+    ctx.strokeStyle = gold(bx, by, bx + bw, by + bh); ctx.lineWidth = 4; ctx.strokeRect(bx + 4, by + 4, bw - 8, bh - 8);
+    ctx.fillStyle = '#3a1810'; ctx.textAlign = 'center';
+    ctx.font = '30px "Playfair Display", Georgia, serif'; ctx.fillText(`${rush.score} note${rush.score === 1 ? '' : 's'} in a minute`, W/2, by + 58);
+    ctx.font = 'italic 18px "IM Fell English", Georgia, serif';
+    const acc = rush.score + rush.misses ? Math.round(100*rush.score/(rush.score + rush.misses)) : 0;
+    ctx.fillText(`${acc}% accurate · ${rush.misses} wrong · best streak ${rush.best}`, W/2, by + 104);
+    ctx.fillText(`about ${rush.avg.toFixed(2)} seconds per note`, W/2, by + 134);
+    ctx.fillText('Press the space bar to go again', W/2, by + 184);
+  }
+}
+addEventListener('keydown', e => { if (e.key === ' ' && mode === 'rush' && rush && rush.done){ e.preventDefault(); startRush(); } });
+document.getElementById('rushBtn').onclick = e => { initAudio(); if (mode === 'rush') setMode('notes'); else { setMode('rush'); startRush(); } e.target.blur(); };
+
 // ---- Wurlitzer Key Note Visualizer: the orange classroom panel on its aluminium stand ----
 // Left: a white grand-staff card with one column of lamps at each note's line or space.
 // Right: a printed keyboard with a lamp on every key. Both light warm white when you play.
@@ -1021,6 +1124,9 @@ function frameBody(){
     drawStaff();
     drawKeys();
     grainOver(); requestAnimationFrame(frame); return;
+  }
+  if (mode === 'rush'){
+    drawParlour(); drawRush(); drawKeys(); grainOver(); requestAnimationFrame(frame); return;
   }
   if (mode === 'voc'){
     drawVoc(); drawKeys(); requestAnimationFrame(frame); return;
